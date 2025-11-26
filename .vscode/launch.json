@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:PerlKit}",
+            "name": "Debug PerlKitBenchmarks",
+            "target": "PerlKitBenchmarks",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug PerlKitBenchmarks"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:PerlKit}",
+            "name": "Release PerlKitBenchmarks",
+            "target": "PerlKitBenchmarks",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release PerlKitBenchmarks"
+        }
+    ]
+}
