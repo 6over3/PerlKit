@@ -1378,102 +1378,14 @@ public final class PerlKit {
 
     // MARK: - Factory Methods
 
-    /// Creates a new PerlKit instance with default options.
-    public static func create(options: PerlKitOptions = PerlKitOptions()) throws -> PerlKit {
-        let wasmBytes = try loadZeroPerlWasm()
-        var config = EngineConfiguration()
-        config.threadingModel = .direct
-        config.compilationMode = .lazy
-        config.stackSize = 8_388_608
-
-        let engine = Engine(configuration: config)
-        let store = Store(engine: engine)
-
-        let stdoutPipe = options.captureStdout ? Pipe() : nil
-        let stderrPipe = options.captureStderr ? Pipe() : nil
-
-        let stdoutFd = stdoutPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardOutput
-        let stderrFd = stderrPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardError
-
-        let wasi = try WASIBridgeToHost(
-            args: ["zeroperl"],
-            environment: options.environment,
-            fileSystemProvider: options.fileSystem?.underlying,
-            stdout: stdoutFd,
-            stderr: stderrFd
-        )
-
-        let module = try parseWasm(bytes: wasmBytes)
-
-        final class PerlReference {
-            weak var perl: PerlKit?
-        }
-        let perlRef = PerlReference()
-
-        var imports = Imports()
-
-        for (moduleName, hostModule) in wasi.wasiHostModules {
-            for (name, wasiFunction) in hostModule.functions {
-                let function = Function(store: store, type: wasiFunction.type) { caller, args in
-                    guard case .memory(let memory) = caller.instance?.export("memory") else {
-                        throw PerlKitError.operationFailed("Missing required \"memory\" export")
-                    }
-                    return try wasiFunction.implementation(memory, args)
-                }
-                imports.define(module: moduleName, name: name, function)
-            }
-        }
-
-        let hostFunc = Function(store: store, parameters: [.i32, .i32, .i32], results: [.i32]) {
-            _, args -> [Value] in
-            guard let perl = perlRef.perl else { return [.i32(0)] }
-
-            guard case .i32(let funcIdValue) = args[0],
-                  case .i32(let argcValue) = args[1],
-                  case .i32(let argvPtrValue) = args[2]
-            else { return [.i32(0)] }
-
-            let funcId = Int32(bitPattern: funcIdValue)
-            let argc = Int32(bitPattern: argcValue)
-            let argvPtr = Int32(bitPattern: argvPtrValue)
-
-            let result = perl.handleHostCall(funcId: funcId, argc: argc, argvPtr: argvPtr)
-            return [Value.i32(UInt32(bitPattern: result))]
-        }
-
-        imports.define(module: "env", name: "call_host_function", hostFunc)
-
-        let instance = try module.instantiate(store: store, imports: imports)
-        try wasi.initialize(instance)
-
-        let zeroPerlExports = try ZeroPerlExports(instance: instance)
-
-        let perl = PerlKit(
-            exports: zeroPerlExports,
-            store: store,
-            stdoutPipe: stdoutPipe,
-            stderrPipe: stderrPipe
-        )
-
-        perlRef.perl = perl
-
-        let result = try perl.exports.initialize()
-        guard result == 0 else {
-            let error = try? perl.lastError()
-            throw PerlKitError.initializationFailed(exitCode: result, perlError: error)
-        }
-
-        return perl
-    }
-
-    /// Creates a new PerlKit instance with command-line arguments.
+    /// Creates a new PerlKit instance.
     ///
     /// - Parameters:
-    ///   - args: Command-line arguments to pass to Perl.
+    ///   - args: Optional command-line arguments to pass to Perl.
     ///   - options: Configuration options.
     /// - Returns: A configured PerlKit instance.
     public static func create(
-        withArgs args: [String],
+        args: [String] = [],
         options: PerlKitOptions = PerlKitOptions()
     ) throws -> PerlKit {
         let wasmBytes = try loadZeroPerlWasm()
@@ -1553,30 +1465,29 @@ public final class PerlKit {
 
         perlRef.perl = perl
 
-        // Build argv for init_with_args
-        var argvPtrs: [Int32] = []
-        for arg in args {
-            let ptr = try zeroPerlExports.writeCString(arg)
-            argvPtrs.append(ptr)
-        }
+        // Initialize with or without arguments
+        let result: Int32
+        if args.isEmpty {
+            result = try perl.exports.initialize()
+        } else {
+            // Build argv for init_with_args
+            var argvPtrs: [Int32] = []
+            for arg in args {
+                let ptr = try zeroPerlExports.writeCString(arg)
+                argvPtrs.append(ptr)
+            }
 
-        let argvArrayPtr: Int32
-        if !argvPtrs.isEmpty {
-            argvArrayPtr = try zeroPerlExports.malloc(Int32(argvPtrs.count * 4))
+            let argvArrayPtr = try zeroPerlExports.malloc(Int32(argvPtrs.count * 4))
             for (i, ptr) in argvPtrs.enumerated() {
                 zeroPerlExports.writeInt32(at: argvArrayPtr + Int32(i * 4), value: ptr)
             }
-        } else {
-            argvArrayPtr = 0
-        }
 
-        let result = try zeroPerlExports.initializeWithArgs(Int32(args.count), argvArrayPtr)
+            result = try zeroPerlExports.initializeWithArgs(Int32(args.count), argvArrayPtr)
 
-        // Clean up
-        for ptr in argvPtrs {
-            try? zeroPerlExports.free(ptr)
-        }
-        if argvArrayPtr != 0 {
+            // Clean up
+            for ptr in argvPtrs {
+                try? zeroPerlExports.free(ptr)
+            }
             try? zeroPerlExports.free(argvArrayPtr)
         }
 

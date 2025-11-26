@@ -4,17 +4,19 @@ A Swift 6 wrapper around [zeroperl](https://github.com/6over3/zeroperl) for embe
 
 ## Installation
 
-```bash
-swift package add-dependency https://github.com/6over3/PerlKit --up-to-next-minor-from 1.0.0
-swift package add-target-dependency PerlKit <your-package-target-name> --package PerlKit
-```
-
-Or add to your `Package.swift`:
+Add to your `Package.swift`:
 
 ```swift
 dependencies: [
     .package(url: "https://github.com/6over3/PerlKit.git", from: "1.0.0")
 ]
+```
+
+Or via command line:
+
+```bash
+swift package add-dependency https://github.com/6over3/PerlKit --up-to-next-minor-from 1.0.0
+swift package add-target-dependency PerlKit <your-target> --package PerlKit
 ```
 
 ## Quick Start
@@ -25,12 +27,18 @@ import PerlKit
 let perl = try PerlKit.create()
 
 let result = try perl.eval("21 * 2")
-print(try result.returnValue?.toInt())  // 42
+print(result.success)  // true
+print(result.exitCode) // 0
 
-let output = try perl.readStdout()
+// Get the result via a variable
+try perl.eval("$answer = 21 * 2")
+let answer = try perl.getVariable("answer")
+print(try answer?.toInt())  // 42
+
+print(try perl.readStdout())
 ```
 
-## Output Buffering
+## Output Capture
 
 stdout and stderr are captured by default:
 
@@ -43,41 +51,55 @@ print(try perl.readStdout())  // "Hello"
 print(try perl.readStderr())  // "Warning at -e line 1."
 ```
 
-Disable buffering:
+Disable capture to let output go to the console:
 
 ```swift
 let options = PerlKitOptions(captureStdout: false, captureStderr: false)
 let perl = try PerlKit.create(options: options)
 ```
 
-## Basic Usage
+## Evaluating Code
 
-### Evaluating Code
+`eval` returns a `PerlResult` with `success`, `error`, and `exitCode`:
 
 ```swift
 let result = try perl.eval("""
     my $x = 10;
     my $y = 20;
-    $x + $y
+    print $x + $y;
     """)
 
-print(try result.returnValue?.toInt())  // 30
+if result.success {
+    print(try perl.readStdout())  // "30"
+} else {
+    print(result.error ?? "Unknown error")
+}
 ```
 
-### Exchanging Data
+## Variables
+
+### Setting Variables
 
 ```swift
 try perl.setVariable("name", value: "Alice")
 try perl.setVariable("age", value: 30)
+try perl.setVariable("price", value: 19.99)
+try perl.setVariable("active", value: true)
 
-try perl.eval("print \"$name is $age years old\\n\"")
-
-try perl.eval("$result = 'computed value'")
-let value = try perl.getVariable("result")
-print(try value?.toString())
+try perl.eval(#"print "$name is $age years old\n""#)
 ```
 
-### Working with Arrays
+### Getting Variables
+
+```swift
+try perl.eval("$result = 'computed value'")
+let value = try perl.getVariable("result")
+print(try value?.toString())  // "computed value"
+```
+
+## Arrays
+
+### Creating Arrays
 
 ```swift
 let arr = try perl.createArray()
@@ -85,12 +107,20 @@ try arr.push("apple")
 try arr.push("banana")
 try arr.push("cherry")
 
-// Arrays are Sequence - use Swift iteration
+print(try arr.count)  // 3
+```
+
+### Iterating (PerlArray conforms to Sequence)
+
+```swift
 for item in arr {
     print(try item.toString())
 }
+```
 
-// Or pass to Perl
+### Passing Arrays to Perl
+
+```swift
 let arrRef = try arr.ref()
 try perl.setVariable("fruits", value: arrRef)
 
@@ -101,69 +131,129 @@ try perl.eval("""
     """)
 ```
 
-Reading arrays from Perl:
+### Reading Arrays from Perl
 
 ```swift
 try perl.eval("@numbers = (1, 2, 3, 4, 5)")
-let numbersRef = try perl.getVariable("numbers")
-let array = try numbersRef?.deref() as PerlArray
+let numbers = try perl.getArrayVariable("numbers")
 
-for num in array {
+for num in numbers! {
     print(try num.toInt())
 }
 ```
 
-### Working with Hashes
+### Array Operations
+
+```swift
+let arr = try perl.createArray()
+try arr.push("first")
+try arr.push("second")
+
+let item = try arr.get(0)        // Get by index
+try arr.set(1, value: "changed") // Set by index
+let last = try arr.pop()         // Pop last element
+try arr.removeAll()              // Clear array
+```
+
+## Hashes
+
+### Creating Hashes
 
 ```swift
 let hash = try perl.createHash()
 try hash.set(key: "name", value: "Bob")
 try hash.set(key: "age", value: 25)
 try hash.set(key: "city", value: "NYC")
+```
 
-// Hashes are Sequence - iterate over key-value pairs
+### Iterating (PerlHash conforms to Sequence)
+
+```swift
 for (key, value) in hash {
     print("\(key): \(try value.toString())")
 }
+```
 
-// Or pass to Perl
+### Passing Hashes to Perl
+
+```swift
 let hashRef = try hash.ref()
 try perl.setVariable("person", value: hashRef)
 
-try perl.eval("print \"$person->{name} is $person->{age}\\n\"")
+try perl.eval(#"print "$person->{name} is $person->{age}\n""#)
 ```
 
-Reading hashes from Perl:
+### Reading Hashes from Perl
 
 ```swift
 try perl.eval("%config = (host => 'localhost', port => 8080)")
-let configRef = try perl.getVariable("config")
-let configHash = try configRef?.deref() as PerlHash
+let config = try perl.getHashVariable("config")
 
-let host = try configHash.get(key: "host")
-print(try host?.toString())
+let host = try config?.get(key: "host")
+print(try host?.toString())  // "localhost"
 ```
 
-### Command-Line Arguments
+### Hash Operations
 
 ```swift
-let args = try perl.createArray()
-try args.push("file.txt")
-try args.push("--verbose")
+let hash = try perl.createHash()
+try hash.set(key: "foo", value: "bar")
 
-let argsRef = try args.ref()
-try perl.setVariable("ARGV", value: argsRef)
+let exists = try hash.contains(key: "foo")  // true
+let val = try hash.get(key: "foo")          // Get value
+try hash.remove(key: "foo")                 // Delete key
+try hash.removeAll()                        // Clear hash
 
-try perl.eval("""
-    foreach my $arg (@ARGV) {
-        print "Arg: $arg\\n";
-    }
-    """)
+let allKeys = try hash.keys()               // [String]
+let allEntries = try hash.entries()         // [(key: String, value: PerlValue)]
 ```
 
-## Working with Files
+## Calling Perl Subroutines
 
-### Virtual Filesystem
+```swift
+try perl.eval("""
+    sub greet {
+        my ($name, $greeting) = @_;
+        return "$greeting, $name!";
+    }
+    """)
+
+let name = try perl.createString("Alice")
+let greeting = try perl.createString("Hello")
+
+let results = try perl.call("greet", arguments: [name, greeting])
+print(try results[0].toString())  // "Hello, Alice!"
+```
+
+## Registering Swift Functions
+
+Call Swift code from Perl:
+
+```swift
+try perl.registerFunction("add") { args in
+    let a = try args[0].toInt()
+    let b = try args[1].toInt()
+    return try perl.createInt(a + b)
+}
+
+try perl.eval(#"print add(10, 32), "\n""#)  // 42
+```
+
+### Registering Methods on Packages
+
+```swift
+try perl.registerMethod(package: "Calculator", method: "multiply") { args in
+    let a = try args[0].toInt()
+    let b = try args[1].toInt()
+    return try perl.createInt(a * b)
+}
+
+try perl.eval(#"print Calculator->multiply(6, 7), "\n""#)  // 42
+```
+
+## Virtual Filesystem
+
+### Adding Files
 
 ```swift
 let fs = try PerlFileSystem()
@@ -181,7 +271,7 @@ try perl.eval("""
     """)
 ```
 
-### Running Scripts
+### Running Script Files
 
 ```swift
 let script = """
@@ -196,88 +286,30 @@ try fs.addFile(at: "/script.pl", content: script)
 let options = PerlKitOptions(fileSystem: fs)
 let perl = try PerlKit.create(options: options)
 
-try perl.eval("do '/script.pl'")
-print(try perl.readStdout())
+try perl.runFile("/script.pl")
+print(try perl.readStdout())  // "Sum: 55\n"
 ```
 
-### Reading and Writing Files
+### Command-Line Arguments
 
 ```swift
+let script = """
+    foreach my $arg (@ARGV) {
+        print "Arg: $arg\\n";
+    }
+    """
+
 let fs = try PerlFileSystem()
-try fs.addFile(at: "/input.txt", content: "Hello World")
+try fs.addFile(at: "/script.pl", content: script)
 
 let options = PerlKitOptions(fileSystem: fs)
 let perl = try PerlKit.create(options: options)
 
-try perl.eval("""
-    open my $in, '<', '/input.txt' or die $!;
-    my $content = <$in>;
-    close $in;
-
-    $content =~ s/World/Perl/;
-
-    open my $out, '>', '/output.txt' or die $!;
-    print $out $content;
-    close $out;
-    """)
-
-try perl.eval("open my $fh, '<', '/output.txt'; $output = <$fh>; close $fh")
-let result = try perl.getVariable("output")
-print(try result?.toString())  // "Hello Perl"
+try perl.runFile("/script.pl", arguments: ["file.txt", "--verbose"])
+print(try perl.readStdout())  // "Arg: file.txt\nArg: --verbose\n"
 ```
 
-## Advanced Usage
-
-### Registering Swift Functions
-
-```swift
-try perl.registerFunction("add") { [perl] args in
-    let a = try args[0].toInt()
-    let b = try args[1].toInt()
-    return try perl.createInt(a + b)
-}
-
-try perl.eval("print add(10, 32), \"\\n\"")  // 42
-```
-
-### Registering Swift Methods
-
-```swift
-class Calculator {
-    func multiply(_ a: Int32, _ b: Int32) -> Int32 {
-        a * b
-    }
-}
-
-let calc = Calculator()
-
-try perl.registerMethod("multiply") { [perl] args in
-    let a = try args[0].toInt()
-    let b = try args[1].toInt()
-    return try perl.createInt(calc.multiply(a, b))
-}
-
-try perl.eval("print multiply(6, 7), \"\\n\"")  // 42
-```
-
-### Calling Perl Subroutines
-
-```swift
-try perl.eval("""
-    sub greet {
-        my ($name, $greeting) = @_;
-        return "$greeting, $name!";
-    }
-    """)
-
-let name = try perl.createString("Alice")
-let greeting = try perl.createString("Hello")
-
-let results = try perl.call("greet", arguments: [name, greeting])
-print(try results[0].toString())  // "Hello, Alice!"
-```
-
-### Environment Variables
+## Environment Variables
 
 ```swift
 let env = [
@@ -288,10 +320,12 @@ let env = [
 let options = PerlKitOptions(environment: env)
 let perl = try PerlKit.create(options: options)
 
-try perl.eval("print \"$ENV{APP_NAME} v$ENV{APP_VERSION}\\n\"")
+try perl.eval(#"print "$ENV{APP_NAME} v$ENV{APP_VERSION}\n""#)
 ```
 
-### Resetting State
+## State Management
+
+### Resetting the Interpreter
 
 ```swift
 try perl.eval("$x = 42")
@@ -299,107 +333,163 @@ print(try perl.getVariable("x")?.toInt())  // 42
 
 try perl.reset()
 
-print(try perl.getVariable("x") == nil)  // true
+print(try perl.getVariable("x"))  // nil
+```
+
+### Error Handling
+
+```swift
+let result = try perl.eval("die 'Something went wrong'")
+if !result.success {
+    print(result.error)  // "Something went wrong at -e line 1."
+}
+
+// Or check the last error directly
+let lastErr = try perl.lastError()
+try perl.clearError()
+```
+
+## Memory Management
+
+PerlValue, PerlArray, and PerlHash should be disposed when no longer needed:
+
+```swift
+let value = try perl.createString("hello")
+// use value...
+try value.dispose()
+
+let array = try perl.createArray()
+// use array...
+try array.dispose()
+```
+
+Dispose the interpreter when done:
+
+```swift
+try perl.dispose()
 ```
 
 ## API Reference
 
 ### PerlKit
 
-```swift
-static func create(options: PerlKitOptions? = nil) throws -> PerlKit
-func dispose() throws
-func eval(_ code: String) throws -> EvalResult
-func call(_ name: String, arguments: [PerlValue]) throws -> [PerlValue]
-func setVariable(_ name: String, value: some PerlConvertible) throws
-func getVariable(_ name: String) throws -> PerlValue?
-func createInt(_ value: Int32) throws -> PerlValue
-func createDouble(_ value: Double) throws -> PerlValue
-func createString(_ value: String) throws -> PerlValue
-func createBool(_ value: Bool) throws -> PerlValue
-func createArray() throws -> PerlArray
-func createHash() throws -> PerlHash
-func registerFunction(_ name: String, _ handler: @escaping ([PerlValue]) throws -> PerlValue?) throws
-func registerMethod(_ name: String, _ handler: @escaping ([PerlValue]) throws -> PerlValue?) throws
-func readStdout() throws -> String
-func readStderr() throws -> String
-func reset() throws
-```
+| Method | Description |
+|--------|-------------|
+| `create(options:)` | Create a new interpreter |
+| `create(withArgs:options:)` | Create with command-line args |
+| `eval(_:arguments:)` | Evaluate Perl code |
+| `runFile(_:arguments:)` | Run a script file |
+| `call(_:arguments:context:)` | Call a Perl subroutine |
+| `getVariable(_:)` | Get a scalar variable |
+| `setVariable(_:value:)` | Set a scalar variable |
+| `getArrayVariable(_:)` | Get an array variable |
+| `getHashVariable(_:)` | Get a hash variable |
+| `createInt(_:)` | Create an integer value |
+| `createDouble(_:)` | Create a double value |
+| `createString(_:)` | Create a string value |
+| `createBool(_:)` | Create a boolean value |
+| `createUndef()` | Create an undef value |
+| `createArray()` | Create an empty array |
+| `createHash()` | Create an empty hash |
+| `registerFunction(_:function:)` | Register a Swift function |
+| `registerMethod(package:method:function:)` | Register a Swift method |
+| `readStdout()` | Get captured stdout |
+| `readStderr()` | Get captured stderr |
+| `flush()` | Flush output buffers |
+| `reset()` | Reset interpreter state |
+| `lastError()` | Get last Perl error |
+| `clearError()` | Clear error state |
+| `dispose()` | Free interpreter memory |
 
 ### PerlValue
 
-```swift
-func toInt() throws -> Int32
-func toDouble() throws -> Double
-func toString() throws -> String
-func toBool() throws -> Bool
-func deref() throws -> PerlArray
-func deref() throws -> PerlHash
-func dispose() throws
-```
+| Method | Description |
+|--------|-------------|
+| `type()` | Get the value type |
+| `isUndef` | Check if undefined |
+| `isRef` | Check if a reference |
+| `toInt()` | Convert to Int32 |
+| `toDouble()` | Convert to Double |
+| `toString()` | Convert to String |
+| `toBool()` | Convert to Bool |
+| `toArray(using:)` | Convert to PerlArray |
+| `toHash(using:)` | Convert to PerlHash |
+| `createRef()` | Create a reference to this value |
+| `deref()` | Dereference |
+| `dispose()` | Free memory |
 
 ### PerlArray
 
-```swift
-var count: Int { get throws }
-func get(_ index: Int) throws -> PerlValue?
-func set(_ index: Int, value: some PerlConvertible) throws
-func push(_ value: some PerlConvertible) throws
-func pop() throws -> PerlValue?
-func ref() throws -> PerlValue
-func dispose() throws
-```
-
-Conforms to `Sequence` for Swift-style iteration.
+| Method | Description |
+|--------|-------------|
+| `count` | Number of elements |
+| `isEmpty` | Check if empty |
+| `get(_:)` | Get element by index |
+| `set(_:value:)` | Set element by index |
+| `push(_:)` | Append element |
+| `pop()` | Remove and return last element |
+| `removeAll()` | Clear the array |
+| `ref()` | Get as a reference value |
+| `dispose()` | Free memory |
 
 ### PerlHash
 
-```swift
-func get(key: String) throws -> PerlValue?
-func set(key: String, value: some PerlConvertible) throws
-func exists(key: String) throws -> Bool
-func delete(key: String) throws
-func keys() throws -> [String]
-func ref() throws -> PerlValue
-func dispose() throws
-```
-
-Conforms to `Sequence` for Swift-style iteration over `(key: String, value: PerlValue)` tuples.
+| Method | Description |
+|--------|-------------|
+| `get(key:)` | Get value by key |
+| `set(key:value:)` | Set key-value pair |
+| `contains(key:)` | Check if key exists |
+| `remove(key:)` | Delete a key |
+| `removeAll()` | Clear the hash |
+| `keys()` | Get all keys |
+| `entries()` | Get all key-value pairs |
+| `ref()` | Get as a reference value |
+| `dispose()` | Free memory |
 
 ### PerlFileSystem
 
-```swift
-init() throws
-func addFile(at path: String, content: String) throws
-func addFile(at path: String, data: Data) throws
-```
+| Method | Description |
+|--------|-------------|
+| `init()` | Create a new filesystem |
+| `addFile(at:content:)` | Add a file (String or Data) |
+| `addFile(at:handle:)` | Add a file from FileDescriptor |
+| `getFile(at:)` | Read file content |
+| `removeFile(at:)` | Delete a file |
 
 ### PerlKitOptions
 
 ```swift
-struct PerlKitOptions {
-    var environment: [String: String] = [:]
-    var fileSystem: PerlFileSystem? = nil
-    var captureStdout: Bool = true
-    var captureStderr: Bool = true
-}
+PerlKitOptions(
+    environment: [String: String] = [:],
+    fileSystem: PerlFileSystem? = nil,
+    captureStdout: Bool = true,
+    captureStderr: Bool = true
+)
 ```
 
-### EvalResult
+### PerlResult
 
 ```swift
-struct EvalResult {
+struct PerlResult {
     let success: Bool
-    let returnValue: PerlValue?
     let error: String?
+    let exitCode: Int32
 }
 ```
 
-## Examples
+### PerlConvertible
 
-See [Tests/PerlKitTests/PerlKitTests.swift](Tests/PerlKitTests/PerlKitTests.swift) for comprehensive examples.
+Types conforming to `PerlConvertible` can be passed directly to `setVariable` and array/hash methods:
 
-See [Benchmarks/PerlKitBenchmarks/PerlKitBenchmarks.swift](Benchmarks/PerlKitBenchmarks/PerlKitBenchmarks.swift) for performance benchmarks.
+- `String`
+- `Int`, `Int32`, `Int64`
+- `UInt`, `UInt32`
+- `Double`, `Float`
+- `Bool`
+- `Optional<T>` where T: PerlConvertible
+- `Array<T>` where T: PerlConvertible
+- `Dictionary<String, T>` where T: PerlConvertible
+- `PerlValue`
 
 ## Development
 
