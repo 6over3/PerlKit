@@ -882,14 +882,15 @@ class CallPerlTests {
 @Suite(.serialized)
 class FileSystemTests {
     @Test func runScriptFiles() async throws {
-        let fs = try PerlFileSystem()
-        try fs.addFile(at: "/test.pl", content: "print \"Hello from file!\"")
+        let scriptPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("perlkit-test-\(UUID().uuidString).pl").path
+        try "print \"Hello from file!\"".write(toFile: scriptPath, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: scriptPath) }
 
-        let options = PerlKitOptions(fileSystem: fs)
-        let perl = try PerlKit.create(options: options)
+        let perl = try PerlKit.create()
         defer { try? perl.dispose() }
 
-        let result = try perl.runFile("/test.pl")
+        let result = try perl.runFile(scriptPath)
 
         #expect(result.success == true)
 
@@ -898,30 +899,32 @@ class FileSystemTests {
     }
 
     @Test func runScriptFilesWithArguments() async throws {
-        let fs = try PerlFileSystem()
-        try fs.addFile(at: "/script.pl", content: "print \"Args: @ARGV\"")
+        let scriptPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("perlkit-test-\(UUID().uuidString).pl").path
+        try "print \"Args: @ARGV\"".write(toFile: scriptPath, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: scriptPath) }
 
-        let options = PerlKitOptions(fileSystem: fs)
-        let perl = try PerlKit.create(options: options)
+        let perl = try PerlKit.create()
         defer { try? perl.dispose() }
 
-        _ = try perl.runFile("/script.pl", arguments: ["one", "two"])
+        _ = try perl.runFile(scriptPath, arguments: ["one", "two"])
 
         let output = try perl.readStdout()
         #expect(output == "Args: one two")
     }
 
     @Test func readDataFiles() async throws {
-        let fs = try PerlFileSystem()
-        try fs.addFile(at: "/data.txt", content: "Hello from file system!")
+        let dataPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("perlkit-test-\(UUID().uuidString).txt").path
+        try "Hello from file system!".write(toFile: dataPath, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: dataPath) }
 
-        let options = PerlKitOptions(fileSystem: fs)
-        let perl = try PerlKit.create(options: options)
+        let perl = try PerlKit.create()
         defer { try? perl.dispose() }
 
         _ = try perl.eval(
             """
-                open my $fh, '<', '/data.txt' or die $!;
+                open my $fh, '<', '\(dataPath)' or die $!;
                 my $content = <$fh>;
                 print $content;
                 close $fh;
@@ -932,12 +935,10 @@ class FileSystemTests {
     }
 
     @Test func handleFileNotFoundErrors() throws {
-        let fs = try PerlFileSystem()
-        let options = PerlKitOptions(fileSystem: fs)
-        let perl = try PerlKit.create(options: options)
+        let perl = try PerlKit.create()
         defer { try? perl.dispose() }
 
-        let result = try perl.runFile("/nonexistent.pl")
+        let result = try perl.runFile("/tmp/perlkit-nonexistent-\(UUID().uuidString).pl")
         #expect(result.success == false)
         #expect(result.error?.contains("No such file or directory") == true)
     }
@@ -1275,17 +1276,18 @@ class CreationOptionsTests {
         #expect(output == "value")
     }
 
-    @Test func createWithCustomFileSystem() async throws {
-        let fs = try PerlFileSystem()
-        try fs.addFile(at: "/test.txt", content: "content")
+    @Test func createWithHostFileSystem() async throws {
+        let filePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("perlkit-test-\(UUID().uuidString).txt").path
+        try "content".write(toFile: filePath, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: filePath) }
 
-        let options = PerlKitOptions(fileSystem: fs)
-        let perl = try PerlKit.create(options: options)
+        let perl = try PerlKit.create()
         defer { try? perl.dispose() }
 
         let d = try perl.eval(
             """
-                open my $fh, '<', '/test.txt';
+                open my $fh, '<', '\(filePath)';
                 print <$fh>;
                 close $fh;
             """)

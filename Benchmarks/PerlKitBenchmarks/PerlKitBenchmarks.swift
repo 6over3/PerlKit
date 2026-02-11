@@ -207,20 +207,21 @@ let benchmarks = {
         benchmark.startMeasurement()
 
         for _ in benchmark.scaledIterations {
-            let fs = try PerlFileSystem()
             let configContent = """
             app.name=MyApp
             app.version=1.0.0
             database.host=localhost
             database.port=5432
             """
-            try fs.addFile(at: "/config.txt", content: configContent)
+            let configPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("perlkit-bench-config.txt").path
+            try configContent.write(toFile: configPath, atomically: true, encoding: .utf8)
+            defer { try? FileManager.default.removeItem(atPath: configPath) }
 
-            let options = PerlKitOptions(fileSystem: fs)
-            let perl = try PerlKit.create(options: options)
+            let perl = try PerlKit.create()
 
             let script = """
-            open my $fh, '<', '/config.txt' or die $!;
+            open my $fh, '<', '\(configPath)' or die $!;
             my %config;
             while (my $line = <$fh>) {
                 next if $line =~ /^\\s*$/;

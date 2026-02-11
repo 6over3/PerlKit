@@ -64,59 +64,7 @@ public enum PerlContext: Int32, Sendable {
     case list = 2
 }
 
-// MARK: - File System Wrapper
-
-/// Content of a file in the virtual file system.
-public enum FileContent: Sendable {
-    case bytes(Data)
-    case handle(FileDescriptor)
-}
-
-/// A simple file system wrapper for PerlKit.
-public final class PerlFileSystem: @unchecked Sendable {
-    private let memoryFS: MemoryFileSystem
-
-    public init() throws {
-        self.memoryFS = try MemoryFileSystem()
-        let devNull = try FileDescriptor.open("/dev/null", .readWrite)
-        try memoryFS.addFile(at: "/dev/null", handle: devNull)
-    }
-
-    /// Adds a file with string content.
-    public func addFile(at path: String, content: String) throws {
-        try memoryFS.addFile(at: path, content: content)
-    }
-
-    /// Adds a file with binary content.
-    public func addFile(at path: String, content: Data) throws {
-        try memoryFS.addFile(at: path, content: content)
-    }
-
-    /// Adds a file backed by a file descriptor.
-    public func addFile(at path: String, handle: FileDescriptor) throws {
-        try memoryFS.addFile(at: path, handle: handle)
-    }
-
-    /// Gets the content of a file.
-    public func getFile(at path: String) throws -> FileContent {
-        let content = try memoryFS.getFile(at: path)
-        switch content {
-        case .bytes(let bytes):
-            return .bytes(Data(bytes))
-        case .handle(let handle):
-            return .handle(handle)
-        }
-    }
-
-    /// Removes a file.
-    public func removeFile(at path: String) throws {
-        try memoryFS.removeFile(at: path)
-    }
-
-    internal var underlying: MemoryFileSystem {
-        memoryFS
-    }
-}
+// MARK: - File System
 
 // MARK: - Result Types
 
@@ -134,9 +82,6 @@ public struct PerlKitOptions: Sendable {
     /// Environment variables to pass to Perl.
     public let environment: [String: String]
 
-    /// Virtual filesystem to provide to Perl.
-    public let fileSystem: PerlFileSystem?
-
     /// Whether to capture stdout (default: true).
     public let captureStdout: Bool
 
@@ -145,12 +90,10 @@ public struct PerlKitOptions: Sendable {
 
     public init(
         environment: [String: String] = [:],
-        fileSystem: PerlFileSystem? = nil,
         captureStdout: Bool = true,
         captureStderr: Bool = true
     ) {
         self.environment = environment
-        self.fileSystem = fileSystem ?? (try? PerlFileSystem())
         self.captureStdout = captureStdout
         self.captureStderr = captureStderr
     }
@@ -1422,15 +1365,9 @@ public final class PerlKit {
         let stdoutFd = stdoutPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardOutput
         let stderrFd = stderrPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardError
 
-        let fileSystemOptions: WASIBridgeToHost.FileSystemOptions
-        if let memoryFS = options.fileSystem?.underlying {
-            fileSystemOptions = .memory(memoryFS)
-                .withStdio(stdout: stdoutFd, stderr: stderrFd)
-                .withPreopens([WASIBridgeToHost.Preopen(guestPath: "/", hostPath: "/")])
-        } else {
-            fileSystemOptions = .host()
-                .withStdio(stdout: stdoutFd, stderr: stderrFd)
-        }
+        let fileSystemOptions = WASIBridgeToHost.FileSystemOptions.host()
+            .withStdio(stdout: stdoutFd, stderr: stderrFd)
+            .withPreopens([WASIBridgeToHost.Preopen(guestPath: "/", hostPath: "/")])
 
         let wasi = try WASIBridgeToHost(
             args: ["zeroperl"] + args,
