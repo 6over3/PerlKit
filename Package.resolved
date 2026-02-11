@@ -1,5 +1,5 @@
 {
-  "originHash" : "f9cb94c70fc18873a338ee9a348f1b9ccb72e850fe7d77a1abcd9b9912a57acc",
+  "originHash" : "2ece37a54fa7d79624402f4a4523b56d8bd27c231e93788a765414d496d7d255",
   "pins" : [
     {
       "identity" : "hdrhistogram-swift",
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log",
       "state" : {
-        "revision" : "ce592ae52f982c847a4efc0dd881cc9eb32d29f2",
-        "version" : "1.6.4"
+        "revision" : "2778fd4e5a12a8aaa30a3ee8285f4ce54c5f3181",
+        "version" : "1.9.1"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
-        "revision" : "3eea09220e07d34ace722221cbda90306f48c86c",
-        "version" : "2.90.1"
+        "revision" : "5e72fc102906ebe75a3487595a653e6f43725552",
+        "version" : "2.94.0"
       }
     },
     {
@@ -103,10 +103,10 @@
     {
       "identity" : "wasmkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/6over3/WasmKit",
+      "location" : "https://github.com/swiftwasm/WasmKit",
       "state" : {
-        "revision" : "7d916fecfe97311a5c0a91b843c8520e2d822316",
-        "version" : "0.1.16"
+        "branch" : "main",
+        "revision" : "7c5f7b183f79231c755380b6810c25b56ce11068"
       }
     }
   ],

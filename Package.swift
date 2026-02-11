@@ -17,7 +17,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/6over3/WasmKit", from: "0.1.6"),
+        .package(url: "https://github.com/swiftwasm/WasmKit", branch: "main"),
         .package(url: "https://github.com/ordo-one/package-benchmark", from: "1.4.0")
     ],
     targets: [

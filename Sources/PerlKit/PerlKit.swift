@@ -77,7 +77,9 @@ public final class PerlFileSystem: @unchecked Sendable {
     private let memoryFS: MemoryFileSystem
 
     public init() throws {
-        self.memoryFS = try MemoryFileSystem(preopens: ["/": "/"])
+        self.memoryFS = try MemoryFileSystem()
+        let devNull = try FileDescriptor.open("/dev/null", .readWrite)
+        try memoryFS.addFile(at: "/dev/null", handle: devNull)
     }
 
     /// Adds a file with string content.
@@ -87,7 +89,7 @@ public final class PerlFileSystem: @unchecked Sendable {
 
     /// Adds a file with binary content.
     public func addFile(at path: String, content: Data) throws {
-        try memoryFS.addFile(at: path, content: Array(content))
+        try memoryFS.addFile(at: path, content: content)
     }
 
     /// Adds a file backed by a file descriptor.
@@ -476,28 +478,43 @@ private struct ZeroPerlExports {
 
     func readBytes(at offset: Int32, count: Int) -> [UInt8] {
         let start = Int(offset)
-        guard start >= 0, start + count <= memory.data.count else { return [] }
-        return Array(memory.data[start..<(start + count)])
+        guard start >= 0, count > 0 else { return [] }
+        return memory.withUnsafeBufferPointer(offset: UInt(start), count: count) { buffer in
+            [UInt8](buffer)
+        }
     }
 
     func readCString(at offset: Int32) -> String {
         guard offset != 0 else { return "" }
-        var length = 0
         let start = Int(offset)
-        guard start >= 0, start < memory.data.count else { return "" }
+        guard start >= 0 else { return "" }
 
-        while start + length < memory.data.count && memory.data[start + length] != 0 {
-            length += 1
+        var result: [UInt8] = []
+        let chunkSize = 4096
+        var pos = start
+        while true {
+            var foundNull = false
+            memory.withUnsafeBufferPointer(offset: UInt(pos), count: chunkSize) { buffer in
+                for i in 0..<buffer.count {
+                    let byte = buffer.load(fromByteOffset: i, as: UInt8.self)
+                    if byte == 0 {
+                        foundNull = true
+                        return
+                    }
+                    result.append(byte)
+                }
+            }
+            if foundNull { break }
+            pos += chunkSize
         }
-        guard length > 0 else { return "" }
-        let bytes = Array(memory.data[start..<(start + length)])
-        return String(decoding: bytes, as: UTF8.self)
+        guard !result.isEmpty else { return "" }
+        return String(decoding: result, as: UTF8.self)
     }
 
     func writeBytes(_ bytes: [UInt8]) throws -> Int32 {
         let ptr = try malloc(Int32(bytes.count))
         let start = Int(ptr)
-        guard start >= 0, start + bytes.count <= memory.data.count else {
+        guard start >= 0 else {
             throw PerlKitError.operationFailed("Invalid memory write")
         }
         memory.withUnsafeMutableBufferPointer(offset: UInt(start), count: bytes.count) { buffer in
@@ -516,34 +533,36 @@ private struct ZeroPerlExports {
 
     func writeInt32(at offset: Int32, value: Int32) {
         let start = Int(offset)
-        guard start >= 0, start + 4 <= memory.data.count else { return }
-        let bytes = withUnsafeBytes(of: value) { Array($0) }
+        guard start >= 0 else { return }
         memory.withUnsafeMutableBufferPointer(offset: UInt(start), count: 4) { buffer in
-            for (i, byte) in bytes.enumerated() {
-                buffer[i] = byte
+            Swift.withUnsafeBytes(of: value) { src in
+                buffer.copyBytes(from: src)
             }
         }
     }
 
     func readInt32(at offset: Int32) -> Int32 {
         let start = Int(offset)
-        guard start >= 0, start + 4 <= memory.data.count else { return 0 }
-        let bytes = Array(memory.data[start..<(start + 4)])
-        return bytes.withUnsafeBytes { $0.load(as: Int32.self) }
+        guard start >= 0 else { return 0 }
+        return memory.withUnsafeBufferPointer(offset: UInt(start), count: 4) { buffer in
+            buffer.load(as: Int32.self)
+        }
     }
 
     func readUInt32(at offset: Int32) -> UInt32 {
         let start = Int(offset)
-        guard start >= 0, start + 4 <= memory.data.count else { return 0 }
-        let bytes = Array(memory.data[start..<(start + 4)])
-        return bytes.withUnsafeBytes { $0.load(as: UInt32.self) }
+        guard start >= 0 else { return 0 }
+        return memory.withUnsafeBufferPointer(offset: UInt(start), count: 4) { buffer in
+            buffer.load(as: UInt32.self)
+        }
     }
 
     func readDouble(at offset: Int32) -> Double {
         let start = Int(offset)
-        guard start >= 0, start + 8 <= memory.data.count else { return 0 }
-        let bytes = Array(memory.data[start..<(start + 8)])
-        return bytes.withUnsafeBytes { $0.load(as: Double.self) }
+        guard start >= 0 else { return 0 }
+        return memory.withUnsafeBufferPointer(offset: UInt(start), count: 8) { buffer in
+            buffer.load(as: Double.self)
+        }
     }
 
     // MARK: - Private Helpers
@@ -1403,12 +1422,20 @@ public final class PerlKit {
         let stdoutFd = stdoutPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardOutput
         let stderrFd = stderrPipe.map { FileDescriptor(rawValue: $0.fileHandleForWriting.fileDescriptor) } ?? .standardError
 
+        let fileSystemOptions: WASIBridgeToHost.FileSystemOptions
+        if let memoryFS = options.fileSystem?.underlying {
+            fileSystemOptions = .memory(memoryFS)
+                .withStdio(stdout: stdoutFd, stderr: stderrFd)
+                .withPreopens([WASIBridgeToHost.Preopen(guestPath: "/", hostPath: "/")])
+        } else {
+            fileSystemOptions = .host()
+                .withStdio(stdout: stdoutFd, stderr: stderrFd)
+        }
+
         let wasi = try WASIBridgeToHost(
             args: ["zeroperl"] + args,
             environment: options.environment,
-            fileSystemProvider: options.fileSystem?.underlying,
-            stdout: stdoutFd,
-            stderr: stderrFd
+            fileSystem: fileSystemOptions
         )
 
         let module = try parseWasm(bytes: wasmBytes)
